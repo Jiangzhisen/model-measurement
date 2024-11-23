@@ -1,0 +1,366 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <title>PLY Model Viewer with Measurement</title>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+        }
+
+        canvas {
+            display: block;
+        }
+
+        #file-input {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            z-index: 100;
+            padding: 10px;
+            background: white;
+            border-radius: 5px;
+        }
+
+        #measurement-controls {
+            position: absolute;
+            top: 30px;
+            left: 20px;
+            z-index: 100;
+            padding: 10px;
+            background: white;
+            border-radius: 5px;
+        }
+
+        #measurement-result {
+            position: absolute;
+            top: 80px;
+            left: 20px;
+            z-index: 100;
+            padding: 10px;
+            background: white;
+            border-radius: 5px;
+            display: none;
+        }
+
+        #loading-container {
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            text-align: center;
+            z-index: 1000;
+            background: rgba(255, 255, 255, 0.9);
+            padding: 20px;
+            border-radius: 10px;
+            box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
+        }
+
+        .progress-bar {
+            width: 200px;
+            height: 10px;
+            background: #f0f0f0;
+            border-radius: 5px;
+            overflow: hidden;
+            margin: 10px 0;
+        }
+
+        .progress {
+            width: 0%;
+            height: 100%;
+            background: #4CAF50;
+            transition: width 0.3s ease;
+        }
+
+        .loading-text {
+            margin-top: 10px;
+            font-family: Arial, sans-serif;
+            color: #333;
+        }
+    </style>
+</head>
+
+<body>
+    <!-- 添加讀取條容器 -->
+    <div id="loading-container">
+        <div class="progress-bar">
+            <div class="progress" id="progress-bar"></div>
+        </div>
+        <div class="loading-text" id="loading-text">Loading: 0%</div>
+    </div>
+    <!-- <input type="file" id="file-input" accept=".ply" /> -->
+    <div id="measurement-controls">
+        <button id="measure-button">Start Measurement</button>
+    </div>
+    <div id="measurement-result">
+        Distance: <span id="distance">0</span> meters
+    </div>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/PLYLoader.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/TrackballControls.js"></script>
+
+    <script>
+        // 初始化場景
+        const scene = new THREE.Scene();
+        scene.background = new THREE.Color(0xffffff);
+
+        // 初始化相機
+        const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+        camera.position.set(0, 1.4, 0);
+
+        // 初始化渲染器
+        const renderer = new THREE.WebGLRenderer({
+            antialias: true,
+            alpha: true
+        });
+        renderer.setPixelRatio(window.devicePixelRatio);
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        document.body.appendChild(renderer.domElement);
+
+        // 添加控制
+        const controls = new THREE.TrackballControls(camera, renderer.domElement);
+        controls.rotateSpeed = 5.0;
+        controls.zoomSpeed = 5.0;
+        controls.panSpeed = 5.0;
+        controls.noZoom = true;
+        controls.noPan = false;
+        controls.staticMoving = true;
+        controls.dynamicDampingFactor = 0.3;
+
+        // 添加光源
+        const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
+        scene.add(ambientLight);
+
+        const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
+        directionalLight.position.set(1, 2, 3);
+        scene.add(directionalLight);
+
+        const hemisphereLight = new THREE.HemisphereLight(0xffffff, 0x444444, 0.8);
+        scene.add(hemisphereLight);
+
+        let currentMesh = null;
+
+        // 測量相關變量
+        let measurementMode = false;
+        let startPoint = null;
+        let endPoint = null;
+        let measurementLine = null;
+        const measurementPoints = [];
+
+        // 定義讀取相關變量
+        const loadingContainer = document.getElementById('loading-container');
+        const progressBar = document.getElementById('progress-bar');
+        const loadingText = document.getElementById('loading-text');
+
+        const loader = new THREE.PLYLoader();
+        try {
+            loader.load('models/combin1122Cloud.ply', function (geometry) {
+                // 隱藏讀取條
+                loadingContainer.style.display = 'none';
+
+                const material = new THREE.PointsMaterial({
+                    size: 0.001,
+                    vertexColors: true,
+                    sizeAttenuation: true
+                });
+
+                if (currentMesh) {
+                    scene.remove(currentMesh);
+                }
+
+                // 翻轉所有頂點的 y 座標
+                const positions = geometry.attributes.position.array;
+                for (let i = 1; i < positions.length; i += 3) {
+                    positions[i] = -positions[i];  // y 座標在每三個數字的第二個位置
+                }
+                geometry.attributes.position.needsUpdate = true;
+
+                const points = new THREE.Points(geometry, material);
+                currentMesh = points;
+
+                geometry.computeBoundingBox();
+                const box = geometry.boundingBox;
+                const center = box.getCenter(new THREE.Vector3());
+                const size = box.getSize(new THREE.Vector3());
+                const maxDim = Math.max(size.x, size.y, size.z);
+                const scale = 2 / maxDim;
+                points.scale.multiplyScalar(scale);
+                points.position.sub(center.multiplyScalar(scale));
+
+                scene.add(points);
+
+                controls.update();
+
+                clearMeasurement();
+            },
+                // 進度回調
+                function (xhr) {
+                    const percentComplete = (xhr.loaded / xhr.total) * 100;
+                    progressBar.style.width = percentComplete + '%';
+                    loadingText.textContent = `Loading: ${Math.round(percentComplete)}%`;
+                },
+                // 錯誤回調
+                function (error) {
+                    console.error('Error loading PLY file:', error);
+                    loadingText.textContent = 'Error loading model';
+                    loadingText.style.color = 'red';
+                }
+            );
+        } catch (error) {
+            console.error('Error loading PLY file:', error);
+            alert('Error loading PLY file. Please make sure it is a valid PLY format.');
+        }
+
+        // 測量按鈕事件
+        document.getElementById('measure-button').addEventListener('click', function () {
+            measurementMode = !measurementMode;
+            this.textContent = measurementMode ? 'Cancel Measurement' : 'Start Measurement';
+            if (!measurementMode) {
+                clearMeasurement();
+            }
+        });
+
+        // 清除測量
+        function clearMeasurement() {
+            if (measurementLine) {
+                scene.remove(measurementLine);
+                measurementLine = null;
+            }
+            measurementPoints.forEach(point => scene.remove(point));
+            measurementPoints.length = 0;
+            startPoint = null;
+            endPoint = null;
+            document.getElementById('measurement-result').style.display = 'none';
+        }
+
+        // 創建測量點
+        function createMeasurementPoint(position) {
+            const geometry = new THREE.SphereGeometry(0.01, 32, 32);
+            const material = new THREE.MeshBasicMaterial({ color: 0xff0000 });
+            const sphere = new THREE.Mesh(geometry, material);
+            sphere.position.copy(position);
+            scene.add(sphere);
+            measurementPoints.push(sphere);
+            return position.clone();
+        }
+
+        // 更新測量線
+        function updateMeasurementLine() {
+            if (startPoint && endPoint) {
+                if (measurementLine) {
+                    scene.remove(measurementLine);
+                }
+                const geometry = new THREE.BufferGeometry().setFromPoints([startPoint, endPoint]);
+                const material = new THREE.LineBasicMaterial({ color: 0xff0000 });
+                measurementLine = new THREE.Line(geometry, material);
+                scene.add(measurementLine);
+
+                // 計算並顯示距離
+                const distance = startPoint.distanceTo(endPoint);
+                document.getElementById('distance').textContent = (distance * 150).toFixed(4);
+                document.getElementById('measurement-result').style.display = 'block';
+            }
+        }
+
+        // 處理點擊事件
+        renderer.domElement.addEventListener('click', function (event) {
+            if (!measurementMode || !currentMesh) return;
+
+            const raycaster = new THREE.Raycaster();
+            const mouse = new THREE.Vector2();
+
+            mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
+            mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
+
+            raycaster.setFromCamera(mouse, camera);
+            const intersects = raycaster.intersectObject(currentMesh);
+
+            if (intersects.length > 0) {
+                if (!startPoint) {
+                    startPoint = createMeasurementPoint(intersects[0].point);
+                } else if (!endPoint) {
+                    endPoint = createMeasurementPoint(intersects[0].point);
+                    updateMeasurementLine();
+                } else {
+                    clearMeasurement();
+                    startPoint = createMeasurementPoint(intersects[0].point);
+                }
+            }
+        });
+
+        // 文件上傳處理
+        // document.getElementById('file-input').addEventListener('change', function (event) {
+        //     const file = event.target.files[0];
+        //     if (!file) return;
+
+        //     const reader = new FileReader();
+        //     reader.readAsArrayBuffer(file);
+
+        //     reader.onload = function (event) {
+        //         const arrayBuffer = event.target.result;
+
+        //         const loader = new THREE.PLYLoader();
+        //         try {
+        //             const geometry = loader.parse(arrayBuffer);
+
+        //             const material = new THREE.PointsMaterial({
+        //                 size: 0.001,
+        //                 vertexColors: true,
+        //                 sizeAttenuation: true
+        //             });
+
+        //             if (currentMesh) {
+        //                 scene.remove(currentMesh);
+        //             }
+
+        //             const points = new THREE.Points(geometry, material);
+        //             currentMesh = points;
+
+        //             geometry.computeBoundingBox();
+        //             const box = geometry.boundingBox;
+        //             const center = box.getCenter(new THREE.Vector3());
+        //             const size = box.getSize(new THREE.Vector3());
+        //             const maxDim = Math.max(size.x, size.y, size.z);
+        //             const scale = 2 / maxDim;
+        //             points.scale.multiplyScalar(scale);
+        //             points.position.sub(center.multiplyScalar(scale));
+
+        //             scene.add(points);
+
+        //             controls.update();
+
+        //             clearMeasurement();
+        //         } catch (error) {
+        //             console.error('Error loading PLY file:', error);
+        //             alert('Error loading PLY file. Please make sure it is a valid PLY format.');
+        //         }
+        //     };
+
+        //     reader.onerror = function () {
+        //         console.error('Error reading file');
+        //         alert('Error reading file');
+        //     };
+        // });
+
+        // 動畫循環
+        function animate() {
+            requestAnimationFrame(animate);
+            controls.update();
+            renderer.render(scene, camera);
+        }
+        animate();
+
+        // 視窗大小調整處理
+        window.addEventListener('resize', onWindowResize, false);
+
+        function onWindowResize() {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            controls.handleResize();
+        }
+    </script>
+</body>
+
+</html>
