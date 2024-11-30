@@ -3,6 +3,7 @@
 
 <head>
     <title>PLY Model Viewer with Measurement</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <style>
         body {
             margin: 0;
@@ -13,18 +14,22 @@
             display: block;
         }
 
-        #file-input {
-            position: absolute;
-            top: 20px;
-            left: 20px;
+        #button-container {
+            position: fixed;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            display: flex;
+            justify-content: center;
+            gap: 10px;
+            padding: 15px;
+            background: rgba(255, 255, 255, 0.9);
+            box-shadow: 0 -2px 10px rgba(0, 0, 0, 0.1);
             z-index: 100;
-            padding: 10px;
-            background: white;
-            border-radius: 5px;
         }
 
         .control-button {
-            padding: 10px 20px;
+            padding: 12px 20px;
             background: #4CAF50;
             color: white;
             border: none;
@@ -32,35 +37,71 @@
             cursor: pointer;
             font-size: 14px;
             transition: background-color 0.3s ease;
+            flex: 1;
+            max-width: 200px;
+        }
+
+        @media screen and (max-width: 768px) {
+            #button-container {
+                padding: 10px;
+                gap: 5px;
+            }
+
+            .control-button {
+                max-width: none;
+                padding: 15px 10px;
+                font-size: 16px;
+            }
+        }
+
+        #measure-button {
+            background: #2196F3;
+        }
+
+        #measure-button:hover {
+            background: #1976D2;
+        }
+
+        #measure-button.active {
+            background: #f44336;
+        }
+
+        #measure-button.active:hover {
+            background: #d32f2f;
+        }
+
+        #download-button {
+            background: #4CAF50;
+        }
+
+        #download-button:hover {
+            background: #45a049;
         }
 
         .control-button:hover {
             background: #45a049;
         }
 
-        #measurement-controls {
-            position: absolute;
-            top: 20px;
-            left: 20px;
-            z-index: 100;
-        }
-
-        #download-button {
-            position: absolute;
-            top: 20px;
-            right: 20px;
-            z-index: 100;
-        }
-
         #measurement-result {
-            position: absolute;
-            top: 80px;
-            left: 20px;
+            position: fixed;
+            bottom: 80px;
+            left: 50%;
+            transform: translateX(-50%);
             z-index: 100;
             padding: 10px;
             background: white;
             border-radius: 5px;
             display: none;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+        }
+
+        @media screen and (max-width: 768px) {
+            #measurement-result {
+                bottom: 90px;
+                width: 80%;
+                text-align: center;
+                font-size: 16px;
+            }
         }
 
         #loading-container {
@@ -101,20 +142,23 @@
 </head>
 
 <body>
-    <!-- 添加讀取條容器 -->
     <div id="loading-container">
         <div class="progress-bar">
             <div class="progress" id="progress-bar"></div>
         </div>
         <div class="loading-text" id="loading-text">Loading: 0%</div>
     </div>
-    <div id="measurement-controls">
-        <button id="measure-button" class="control-button">Start Measurement</button>
-    </div>
-    <button id="download-button" class="control-button">Download</button>
+
     <div id="measurement-result">
         Distance: <span id="distance">0</span> meters
     </div>
+
+    <!-- 新的按鈕容器 -->
+    <div id="button-container">
+        <button id="measure-button" class="control-button">Start Measurement</button>
+        <button id="download-button" class="control-button">Download</button>
+    </div>
+
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/PLYLoader.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/TrackballControls.js"></script>
@@ -280,6 +324,7 @@
         document.getElementById('measure-button').addEventListener('click', function () {
             measurementMode = !measurementMode;
             this.textContent = measurementMode ? 'Cancel Measurement' : 'Start Measurement';
+            this.classList.toggle('active', measurementMode);
             if (!measurementMode) {
                 clearMeasurement();
             }
@@ -327,15 +372,15 @@
             }
         }
 
-        // 處理點擊事件
-        renderer.domElement.addEventListener('click', function (event) {
+        // 處理點擊事件的通用函數
+        function handlePointerEvent(clientX, clientY) {
             if (!measurementMode || !currentMesh) return;
 
             const raycaster = new THREE.Raycaster();
             const mouse = new THREE.Vector2();
 
-            mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
-            mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
+            mouse.x = (clientX / window.innerWidth) * 2 - 1;
+            mouse.y = -(clientY / window.innerHeight) * 2 + 1;
 
             raycaster.setFromCamera(mouse, camera);
             const intersects = raycaster.intersectObject(currentMesh);
@@ -351,7 +396,27 @@
                     startPoint = createMeasurementPoint(intersects[0].point);
                 }
             }
+        }
+
+        // 滑鼠點擊事件
+        renderer.domElement.addEventListener('click', function (event) {
+            event.preventDefault();
+            handlePointerEvent(event.clientX, event.clientY);
         });
+
+        // 觸控事件
+        renderer.domElement.addEventListener('touchstart', function (event) {
+            event.preventDefault(); // 防止觸發點擊事件
+            const touch = event.touches[0];
+            handlePointerEvent(touch.clientX, touch.clientY);
+        }, { passive: false });
+
+        // 防止縮放
+        renderer.domElement.addEventListener('touchmove', function (event) {
+            if (measurementMode) {
+                event.preventDefault();
+            }
+        }, { passive: false });
 
         // 動畫循環
         function animate() {
